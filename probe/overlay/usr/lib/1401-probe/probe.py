@@ -52,7 +52,7 @@ import time
 import traceback
 import zipfile
 
-VERSION = "2.0.2"
+VERSION = "2.1.0"
 SCHEMA = "1401-probe/1"
 STICK_LABEL = "PROBE1401"
 MARKER = "1401-probe.marker"
@@ -2062,6 +2062,119 @@ def st_trace():
     save("trace/trace.json", tr)
 
 
+GPU3D_CAP = 12 << 20  # per GPU: the drivers' own command dumps and the kernel-call log, each cut here
+
+
+def vk_pack(packs_dir):
+    """The Vulkan pack on the stick (Mesa's Linux Vulkan drivers + gputest + drmlog), or None."""
+    hits = sorted(glob.glob(os.path.join(packs_dir, "vulkan-mesa-*.tar.xz")), reverse=True)
+    return hits[0] if hits else None
+
+
+def gpu3d_targets(gpus, bound):
+    """Every display GPU a Linux DRM driver has bound - any vendor, supported by NullMoth or not - as (bdf, vendor, device,
+    driver). `bound` maps bdf -> driver name; a GPU nothing bound has no Vulkan driver to test."""
+    out = []
+    for g in gpus:
+        drv = bound.get(g.get("bdf"))
+        if drv in ("i915", "xe", "amdgpu", "nouveau") and g.get("vendor") and g.get("device"):
+            out.append((g["bdf"], g["vendor"][2:].lower(), g["device"][2:].lower(), drv))
+    return out
+
+
+def gpu3d_env(root, drv, drmlog):
+    """The environment gputest runs in: the pack's libraries and ICDs, no shader cache on the stick, and the dump switch
+    of this GPU's Mesa driver (decoded Intel batches; RADV's command streams; NVK's pushbuffers)."""
+    env = dict(os.environ)
+    lib = os.path.join(root, "usr/lib")
+    icd = os.path.join(root, "usr/share/vulkan/icd.d")
+    env.update({"LD_LIBRARY_PATH": lib, "VK_DRIVER_FILES": ":".join(sorted(glob.glob(icd + "/*.json"))),
+                "MESA_SHADER_CACHE_DISABLE": "true", "XDG_CACHE_HOME": "/tmp", "HOME": "/tmp",
+                "DRMLOG": drmlog, "DRMLOG_MAX": str(GPU3D_CAP), "LD_PRELOAD": os.path.join(lib, "drmlog.so")})
+    env["VK_ICD_FILENAMES"] = env["VK_DRIVER_FILES"]  # older loaders read this name
+    if drv in ("i915", "xe"):
+        env["INTEL_DEBUG"] = "bat,submit"
+    elif drv == "amdgpu":
+        env["RADV_DEBUG"] = "dumpibs,info,shaders"
+    elif drv == "nouveau":
+        env["NVK_DEBUG"] = "push_dump"
+    return env
+
+
+def st_gpu3d():
+    """After the driver trace: run Linux's own Vulkan driver for each GPU (Mesa ANV, RADV, NVK) and record what it does.
+    vulkaninfo says what the GPU exposes; gputest runs a compute test and an offscreen draw and checks every result on
+    the CPU; the kernel calls (drmlog) and the driver's own command dumps are the reference a macOS driver for this GPU
+    must reproduce. Every GPU any Linux driver bound is tested, not only those NullMoth supports today: this is how the
+    next ones (Intel Xe and Arc, Radeon RX 7000/9000, Ryzen AI) get built. Nothing is drawn on the screen."""
+    g3 = REP.setdefault("gpu3d", {"runs": {}, "errors": {}})
+    bound = {g["bdf"]: rdlink("/sys/bus/pci/devices/%s/driver" % g["bdf"]) for g in REP.get("gpus", []) if g.get("bdf")}
+    targets = gpu3d_targets(REP.get("gpus", []), bound)
+    if os.environ.get("P1401_GPU3D_CPU"):  # the build check only: lavapipe (the CPU) stands in for a GPU in a container
+        targets.append(("cpu", "10005", "0000", "lavapipe"))
+    if not targets:
+        g3["errors"]["none"] = "no GPU is bound to a Linux DRM driver with a Vulkan driver (i915, xe, amdgpu, nouveau)"
+        return
+    pk = vk_pack(os.path.join(MNT, "drivers"))
+    if not pk:
+        g3["errors"]["pack"] = "no Vulkan pack under drivers/ on the stick"
+        return
+    mem = ival((re.search(r"MemAvailable:\s+(\d+)", rd("/proc/meminfo") or "") or [0, "0"])[1]) << 10
+    if mem and mem < (1500 << 20):
+        g3["errors"]["memory"] = "only %d MB free: the unpacked drivers need about 400 MB" % (mem >> 20)
+        return
+    root = "/run/vkpack"
+    try:
+        unpack_pack(pk, root)
+    except Exception as e:  # noqa: BLE001 - the reason is the result
+        g3["errors"]["pack"] = "unpack: %s: %s" % (type(e).__name__, e)
+        return
+    g3["pack"] = os.path.basename(pk)
+    tmp = "/tmp/vkinfo"
+    os.makedirs(tmp, exist_ok=True)
+    env0 = gpu3d_env(root, "", "/dev/null")
+    env0.pop("LD_PRELOAD")
+    for name, argv in (("gpu3d/vulkaninfo-summary.txt", [root + "/usr/bin/vulkaninfo", "--summary"]),
+                       ("gpu3d/vulkaninfo.txt", [root + "/usr/bin/vulkaninfo"])):
+        try:
+            p = subprocess.run(argv, env=env0, cwd=tmp, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
+            save(name, p.stdout[:GPU3D_CAP])
+        except (OSError, subprocess.TimeoutExpired) as e:
+            g3["errors"][name] = str(e)
+    for bdf, ven, dev, drv in targets:
+        tag = "gpu3d:" + bdf
+        with step(tag) as go:
+            if not go:
+                g3["runs"][bdf] = {"skipped": "this test froze a previous run"}
+                continue
+            UI.say("    Vulkan test on %s (%s) ..." % (bdf, drv))
+            d = "gpu3d/%s" % bdf.replace(":", "_")
+            drmlog = os.path.join(OUT, d, "drm-calls.txt")
+            os.makedirs(os.path.dirname(drmlog), exist_ok=True)
+            env = gpu3d_env(root, drv, drmlog)
+            env["GPUTEST_ONLY"] = "%s:%s" % (ven, dev)
+            if drv == "lavapipe":
+                env["GPUTEST_CPU"] = "1"
+            res = {"driver": drv}
+            t0 = time.time()
+            with deadman(150, "gpu3d %s" % bdf):  # a GPU hang ends in poweroff; the next run skips this step
+                try:
+                    p = subprocess.run([root + "/usr/bin/gputest"], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                       timeout=120)
+                    res["rc"] = p.returncode
+                    save(d + "/driver-dump.txt", p.stderr[:GPU3D_CAP])
+                    lines = [ln for ln in p.stdout.decode("utf-8", "replace").splitlines() if ln.startswith("{")]
+                    res["result"] = json.loads(lines[-1]) if lines else None
+                except subprocess.TimeoutExpired:
+                    res["rc"] = "timeout"
+                except (OSError, ValueError) as e:
+                    res["rc"] = "error: %s" % e
+            res["seconds"] = round(time.time() - t0, 1)
+            g3["runs"][bdf] = res
+    shutil.rmtree(root, ignore_errors=True)
+    save("gpu3d/gpu3d.json", g3)
+
+
 def run_stage(i, n, title, key, fn, timeout):
     UI.say(" [%2d/%d] %-44s" % (i, n, title), end="")
     if "stage:" + key in SKIP:
@@ -2161,7 +2274,7 @@ def main():
               ("Kernel log", "dmesg", st_dmesg, 30)]
     if radios in ("yes", "test"):
         stages.append(("Wi-Fi, Bluetooth, Ethernet (you said yes)", "radios", st_radios, 300))
-    total = len(stages) + (2 if MODE == "full" else 0)
+    total = len(stages) + (3 if MODE == "full" else 0)
     for i, (title, key, fn, t) in enumerate(stages, 1):
         run_stage(i, total, title, key, fn, t)
     s = summary()
@@ -2171,7 +2284,8 @@ def main():
     for line in s.splitlines():
         UI.say("  " + line)
     UI.say("")
-    known = {g.get("vendor") for g in REP.get("gpus", [])} & {"0x10de", "0x1002", "0x8086"}
+    # every GPU, any vendor: a GPU NullMoth does not support yet is exactly what these steps are for
+    known = [g for g in REP.get("gpus", [])]
     if MODE == "full" and known:
         UI.say("  Your report is saved. Last step: a graphics-driver test.")
         UI.say("  Then each driver is watched while it starts its device (NVIDIA cards get NVIDIA's own driver).")
@@ -2181,8 +2295,9 @@ def main():
         # No skip key: the graphics-driver stage is the data NullMoth needs most. A freeze here is
         #   remembered on the stick, so the next run skips only the driver that froze (step "driver:<name>").
         UI.countdown(20, "Starting in (any key starts now)")
-        run_stage(total - 1, total, "Graphics drivers (connectors, firmware)", "gpu_drivers", st_gpu_drivers, 420)
-        run_stage(total, total, "Driver trace (what each driver does to the hardware)", "trace", st_trace, 900)
+        run_stage(total - 2, total, "Graphics drivers (connectors, firmware)", "gpu_drivers", st_gpu_drivers, 420)
+        run_stage(total - 1, total, "Driver trace (what each driver does to the hardware)", "trace", st_trace, 900)
+        run_stage(total, total, "GPU test (Linux's own Vulkan driver, off screen)", "gpu3d", st_gpu3d, 600)
     elif MODE == "full":
         REP["stages"]["gpu_drivers"] = {"status": "skipped", "seconds": 0, "error": "no NVIDIA/AMD/Intel display device"}
     elif MODE == "safe":
@@ -2579,6 +2694,27 @@ def selftest():
     finally:
         DEADMAN_CMD = saved_cmd
         shutil.rmtree(dmdir, ignore_errors=True)
+
+    # GPU test step: every bound GPU of any vendor is a target; each Mesa driver gets its own dump switch, and only it
+    gp = [{"bdf": "0000:03:00.0", "vendor": "0x8086", "device": "0x56A0"},   # Intel Arc A770: not supported by NullMoth
+          {"bdf": "0000:0c:00.0", "vendor": "0x1002", "device": "0x7550"},   # Radeon RX 9070: not supported either
+          {"bdf": "0000:01:00.0", "vendor": "0x10de", "device": "0x2d05"},   # RTX 5060 on nouveau after the trace
+          {"bdf": "0000:00:02.0", "vendor": "0x8086", "device": "0x9a49"}]   # Iris Xe that no driver bound
+    tg = gpu3d_targets(gp, {"0000:03:00.0": "xe", "0000:0c:00.0": "amdgpu", "0000:01:00.0": "nouveau", "0000:00:02.0": None})
+    check("unsupported GPUs (Arc, RX 9070) are tested like supported ones; an unbound one is skipped",
+        [t[0] for t in tg] == ["0000:03:00.0", "0000:0c:00.0", "0000:01:00.0"] and tg[1][1:3] == ("1002", "7550"), str(tg))
+    e_i, e_a, e_n = gpu3d_env("/run/vkpack", "xe", "/x"), gpu3d_env("/run/vkpack", "amdgpu", "/x"), gpu3d_env("/run/vkpack", "nouveau", "/x")
+    check("Intel gets decoded batches, AMD its command streams, NVIDIA its pushbuffers - and none gets another's switch",
+        e_i.get("INTEL_DEBUG") == "bat,submit" and "RADV_DEBUG" not in e_i and e_a.get("RADV_DEBUG", "").startswith("dumpibs")
+        and "INTEL_DEBUG" not in e_a and e_n.get("NVK_DEBUG") == "push_dump" and "RADV_DEBUG" not in e_n,
+        "%s | %s | %s" % (e_i.get("INTEL_DEBUG"), e_a.get("RADV_DEBUG"), e_n.get("NVK_DEBUG")))
+    check("gputest runs on the pack's own libraries with the kernel-call logger preloaded",
+        e_a["LD_LIBRARY_PATH"] == "/run/vkpack/usr/lib" and e_a["LD_PRELOAD"].endswith("/drmlog.so") and e_a["DRMLOG"] == "/x", e_a["LD_PRELOAD"])
+    vt = tempfile.mkdtemp(prefix="vkp-")
+    check("no Vulkan pack on the stick is reported, not guessed", vk_pack(vt) is None)
+    open(os.path.join(vt, "vulkan-mesa-26.1.6-r0.tar.xz"), "wb").close()
+    check("the Vulkan pack is found under drivers/", (vk_pack(vt) or "").endswith("vulkan-mesa-26.1.6-r0.tar.xz"), str(vk_pack(vt)))
+    shutil.rmtree(vt, ignore_errors=True)
 
     print("\n%d failed" % len(fails) if fails else "\nall checks passed")
     return 1 if fails else 0

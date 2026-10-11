@@ -2,6 +2,19 @@
 
 Every release stays up, on nullmothsystems.com/probe and on the GitHub releases page, with its SHA-256.
 
+## 2.1.0 - 2026-10-11
+
+Every graphics card and integrated GPU now counts, old and new, whatever the brand. This is how NullMoth learns the
+GPUs macOS has never supported: Intel Iris Xe and Arc, Radeon RX 7000 and 9000, Ryzen AI, and older cards too.
+
+- **New last step: a GPU test.** Linux's own graphics drivers (Mesa: Intel, AMD and NVIDIA) run a short compute test
+  and an off-screen drawing test on each GPU and check every result. Nothing is shown on the screen. The report gets
+  what each driver told the GPU to do, which is what a macOS driver for that GPU has to do the same way.
+- **Every GPU is scanned and traced**, not only NVIDIA, AMD and Intel ones we already support.
+- Same safety as before: your drives stay locked read-only, nothing leaves the computer, and if a test hangs the PC
+  turns itself off and the next start skips that test.
+- The stick is about 80 MB larger (the graphics drivers for the test ride on it).
+
 ## 2.0.2 - 2026-10-09
 
 - **No more freezes in the last step on laptops.** Every driver test in the last step now runs under the same

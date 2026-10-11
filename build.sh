@@ -40,8 +40,12 @@ export NM_SEAL_KEY
 if [ "$what" = nvpack ] || [ "$what" = all ]; then
 	docker run --rm --platform linux/amd64 -v "$PWD":/work -w /work "$ALPINE" sh probe/image/nvpack.sh
 fi
+# the Vulkan pack for the GPU test step (Mesa ANV/RADV/NVK/lavapipe + gputest + drmlog; cached in out/vkpack)
+if [ "$what" = vkpack ] || [ "$what" = all ]; then
+	docker run --rm --platform linux/amd64 -v "$PWD":/work -w /work "$ALPINE" sh probe/image/vkpack.sh
+fi
 if [ "$what" = image ] || [ "$what" = all ]; then
-	docker run --rm --platform linux/amd64 -v "$PWD":/work -w /work -e NM_PRIVATE_RE -e NM_SEAL_KEY -e NM_ALLOW_NO_NVPACK "$ALPINE" sh probe/image/build-inside.sh
+	docker run --rm --platform linux/amd64 -v "$PWD":/work -w /work -e NM_PRIVATE_RE -e NM_SEAL_KEY -e NM_ALLOW_NO_NVPACK -e NM_ALLOW_NO_VKPACK "$ALPINE" sh probe/image/build-inside.sh
 fi
 if [ "$what" = windows ] || [ "$what" = all ]; then
 	[ -f out/usb/boot/initramfs.zst ] || { echo "error: build the image first: ./build.sh image"; exit 1; }

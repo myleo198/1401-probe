@@ -198,6 +198,14 @@ for pk in out/nvpack/nvidia-*.tar.xz; do
 done
 for f in out/nvpack/*.failed; do [ -f "$f" ] && echo "  NOT BUILT on $V: $(basename "$f" .failed) (its cards are traced with nouveau)"; done
 
+say "Vulkan pack for the GPU test step (build.sh vkpack)"
+# Mesa's Linux Vulkan drivers + gputest + drmlog: unpacked into RAM only on a machine with a GPU to test (~81 MB xz)
+VP=$(ls out/vkpack/vulkan-mesa-*.tar.xz 2>/dev/null | head -1)
+if [ -z "$VP" ] && [ "${NM_ALLOW_NO_VKPACK:-}" != 1 ]; then
+	echo "error: no Vulkan pack in out/vkpack (./build.sh vkpack, or NM_ALLOW_NO_VKPACK=1)"; exit 1
+fi
+[ -z "$VP" ] || { cp "$VP" "$OUT/usb/drivers/"; echo "  $(basename "$VP") ($(du -h "$VP" | cut -f1))"; }
+
 # GPL/other licenses travel with the binaries: every package in the image, its version, license and source
 {
 	cat docs/THIRD-PARTY-NOTICES.head.txt
