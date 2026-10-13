@@ -3,6 +3,7 @@
 #
 #   bash 1401-probe-mac.sh            make the stick (asks before it erases anything)
 #   bash 1401-probe-mac.sh --report   after the scan: copy the report off the stick, open the upload page
+#   bash 1401-probe-mac.sh --scan     scan THIS Mac (or Mothintosh): CPU, graphics, Wi-Fi, Bluetooth, every device
 #   bash 1401-probe-mac.sh --selftest
 #
 # Step by step, and it says each step as it goes:
@@ -123,6 +124,93 @@ find_report() {
 	open "$dst" 2>/dev/null; open "$UPLOAD_URL" 2>/dev/null
 }
 
+# Text from this Mac loses what identifies it or its owner: serial numbers, UUIDs, network and Bluetooth
+# addresses, the Wi-Fi networks it knows, the names of paired devices, and the Mac's and the user's names.
+# $1 = file. Lists under the headings in the awk below are dropped whole (they name networks and other people's devices).
+scrub_file() {
+	local f=$1 t="$1.t" n q u
+	LC_ALL=C awk '
+		/^[[:space:]]*(Current Network Information|Other Local Wi-Fi Networks|Preferred Networks|Connected|Not Connected|Paired Devices|Devices \(Paired, Configured, etc\.\)|Recent Devices):[[:space:]]*$/ {
+			match($0, /^[[:space:]]*/); skip = RLENGTH; print substr($0, 1, skip) "(list removed)"; next }
+		skip >= 0 { match($0, /^[[:space:]]*/); if (RLENGTH > skip || $0 ~ /^[[:space:]]*$/) next; skip = -1 }
+		{ print }' skip=-1 "$f" > "$t" || { rm -f "$t"; return 1; }
+	LC_ALL=C sed -E \
+		-e 's/("IOPlatform(UUID|SerialNumber)" = )"[^"]*"/\1"(removed)"/' \
+		-e 's/("[A-Za-z -]*(Serial|UUID|UDID)[A-Za-z ]*" ?= ?)("[^"]*"|<[0-9A-Fa-f]*>|[0-9]+)/\1"(removed)"/g' \
+		-e 's/("(serial-number|board-id-serial|IOPlatformSerialNumber|kUSBSerialNumberString|USB Serial Number|Serial Number|SerialNumber|IOMACAddress|BD_ADDR|BluetoothDeviceAddress|LocalAddress|IOBluetoothHostControllerAddress)" = ).*/\1(removed)/' \
+		-e 's/^([[:space:]]*[^:]*(Serial|UUID|UDID)[^:]*:).*/\1 (removed)/' \
+		-e 's/^([[:space:]]*(UID|Address|MAC Address|Ethernet Address|Wi-Fi Address|Bluetooth Address|SSID|BSSID|Network Name)[^:]*:).*/\1 (removed)/' \
+		-e 's/(^|[^0-9A-Fa-f:])([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}([^0-9A-Fa-f:]|$)/\1XX:XX:XX:XX:XX:XX\3/g' \
+		"$t" > "$f" || { rm -f "$t"; return 1; }
+	rm -f "$t"
+	for n in $SCRUB_NAMES; do
+		q=$(printf '%s' "$n" | LC_ALL=C sed 's/[][\\.*^$/]/\\&/g')
+		LC_ALL=C sed "s/$q/(removed)/g" "$f" > "$t" && mv "$t" "$f" || { rm -f "$t"; return 1; }
+	done
+	# a user name can be an ordinary word, so it is only replaced inside a home path
+	for u in $SCRUB_USERS; do
+		LC_ALL=C sed "s#/Users/$u\([/ \"]\)#/Users/(removed)\1#g; s#/Users/$u\$#/Users/(removed)#" "$f" > "$t" && mv "$t" "$f" || { rm -f "$t"; return 1; }
+	done
+}
+
+scan_mac() {
+	[ "$(uname -s)" = Darwin ] || die "  --scan scans a Mac. On a PC, use the 1401 stick."
+	local stamp tmpd out zip f
+	stamp=$(date -u +%Y%m%dT%H%M%SZ)
+	tmpd=$(mktemp -d /tmp/1401-scan.XXXXXX) || die "  could not make a temporary folder"
+	out=$tmpd/1401-mac-scan-$stamp
+	mkdir -p "$out" || die "  could not make a temporary folder"
+	SCRUB_NAMES=$(printf '%s\n' "$(scutil --get ComputerName 2>/dev/null)" "$(scutil --get LocalHostName 2>/dev/null)" \
+		"$(hostname -s 2>/dev/null)" | awk 'length($0) >= 3 && $0 !~ /[[:space:]]/' | sort -u)
+	SCRUB_USERS=$(printf '%s\n' "$(id -un)" "$(stat -f %Su /dev/console 2>/dev/null)" | awk 'length($0) >= 2 && $0 != "root"' | sort -u)
+	say ""
+	say "  1401 Probe $VERSION: scanning this Mac. It only reads, changes nothing and sends nothing."
+	say "  Left out: serial numbers, UUIDs, network and Bluetooth addresses, Wi-Fi network names,"
+	say "  the names of paired devices, and this Mac's and your user's names."
+	say ""
+	c() { f=$1; shift; say "    $f"; "$@" > "$out/$f" 2>&1; echo "rc=$?" >> "$out/$f"; }
+	c sw_vers.txt sw_vers
+	c uname.txt uname -a
+	c sysctl_cpu.txt sysctl machdep.cpu machdep.tsc machdep.xcpm hw.optional hw.cpufrequency hw.busfrequency \
+		hw.tbfrequency hw.memsize hw.model hw.ncpu hw.physicalcpu hw.logicalcpu hw.cachesize hw.cachelinesize
+	c sysctl_kern.txt sysctl kern.version kern.osversion kern.bootargs
+	c ioreg_pci.txt ioreg -lw0 -r -c IOPCIDevice
+	c ioreg_gfx_tree.txt sh -c 'for n in GFX0 IGPU PEGP GPU0 VID PEG0 PEG1 PEG2 IGFX; do ioreg -lw0 -p IODeviceTree -r -n $n; done'
+	c ioreg_framebuffer.txt ioreg -lw0 -r -c IOFramebuffer
+	c ioreg_accelerator.txt ioreg -lw0 -r -c IOAccelerator
+	c ioreg_display.txt ioreg -lw0 -r -c IODisplayConnect
+	c ioreg_backlight.txt ioreg -lw0 -r -c AppleBacklightDisplay
+	c ioreg_cpu_pm.txt ioreg -lw0 -r -c X86PlatformPlugin
+	c ioreg_acpi_tables.plist ioreg -a -r -c AppleACPIPlatformExpert -k "ACPI Tables"
+	c ioreg_audio.txt ioreg -lw0 -r -c IOHDACodecDevice
+	c ioreg_usb.txt ioreg -lw0 -p IOUSB
+	c ioreg_wifi.txt sh -c 'ioreg -lw0 -r -c IO80211Controller; ioreg -lw0 -r -c IO80211Interface'
+	c ioreg_bluetooth.txt ioreg -lw0 -r -c IOBluetoothHostController
+	c ioreg_battery.txt ioreg -lw0 -r -c AppleSmartBattery
+	c ioreg_input.txt sh -c 'ioreg -lw0 -r -c IOHIDInterface | grep -E "\"(Product|Manufacturer|VendorID|ProductID|Transport|PrimaryUsage|PrimaryUsagePage|LocationID)\" = |\+-o "'
+	c ioreg_storage.txt sh -c 'ioreg -lw0 -r -c IONVMeController; ioreg -lw0 -r -c IOAHCIBlockStorageDevice'
+	c kexts.txt kmutil showloaded
+	c hardware.txt system_profiler -detailLevel mini SPDisplaysDataType SPPCIDataType SPAirPortDataType SPBluetoothDataType \
+		SPAudioDataType SPUSBDataType SPThunderboltDataType SPNVMeDataType SPSerialATADataType SPCameraDataType \
+		SPCardReaderDataType SPPowerDataType SPMemoryDataType
+	c nvram.txt sh -c 'nvram boot-args; nvram csr-active-config'
+	c pmset.txt sh -c 'pmset -g; pmset -g cap; pmset -g ps'
+	c log_hardware.txt sh -c "log show --last boot --style compact --predicate 'sender CONTAINS[c] \"Intel\" OR sender CONTAINS[c] \"AMD\" OR sender CONTAINS[c] \"NV\" OR sender CONTAINS[c] \"Graphics\" OR sender CONTAINS[c] \"framebuffer\" OR sender CONTAINS[c] \"Backlight\" OR sender CONTAINS[c] \"Metal\" OR sender CONTAINS[c] \"80211\" OR sender CONTAINS[c] \"Bluetooth\" OR sender CONTAINS[c] \"Brcm\" OR sender CONTAINS[c] \"HDA\"' 2>/dev/null | tail -n 20000"
+	say ""
+	say "  Removing serial numbers, addresses and names..."
+	for f in "$out"/*; do
+		scrub_file "$f" || { say "    could not clean $(basename "$f"): left out"; rm -f "$f" "$f.t"; }
+	done
+	zip="$HOME/Desktop/1401-mac-scan-$stamp.zip"
+	(cd "$tmpd" && COPYFILE_DISABLE=1 /usr/bin/zip -qrX "$zip" "$(basename "$out")") || die "  could not write $zip"
+	rm -rf "$tmpd"
+	say ""
+	say "  Done. Your scan is on the Desktop: $(basename "$zip") ($(($(wc -c < "$zip") / 1024)) KB)"
+	say "  Send it at $UPLOAD_URL"
+	open -R "$zip" 2>/dev/null; open "$UPLOAD_URL" 2>/dev/null
+	return 0
+}
+
 selftest() {
 	local fails=0
 	check() { if [ "$2" = 0 ]; then say "  ok   $1"; else say "  FAIL $1"; fails=$((fails + 1)); fi; }
@@ -145,6 +233,23 @@ selftest() {
 	disk_ok disk7 >/dev/null; r=$?; check "a disk that says Internal: Yes is refused" $((r == 0))
 	disk_ok disk9 >/dev/null; r=$?; check "something diskutil does not know is refused" $((r == 0))
 	unset -f diskutil
+	# the scan's cleaner, on text shaped like what system_profiler and ioreg print
+	local d; d=$(mktemp -d)
+	SCRUB_NAMES="Jane-MacBook"; SCRUB_USERS="jane"; local h=/Users
+	printf '%s\n' "Wi-Fi:" "    Card Type: Wi-Fi  (0x14E4, 0x7BF)" "    Firmware Version: wl0: Oct 2 2024 version 9.30.514.0.32.5.92" \
+		"    MAC Address: a4:83:e7:12:34:56" "    Current Network Information:" "        HomeNetwork5G:" "          PHY Mode: 802.11ac" \
+		"    Other Local Wi-Fi Networks:" "        Neighbours:" "Bluetooth Controller:" "    Chipset: BCM_4364B3" "    Address: A4:83:E7:12:34:57" \
+		"    Connected:" "        Jane's AirPods:" "          Address: 11:22:33:44:55:66" "    Not Connected:" "        Jane's Keyboard:" \
+		"Serial Number (system): C02XYZ12345" '    "IOPlatformSerialNumber" = "C02XYZ12345"' '    "IOMACAddress" = <a483e7123456>' '      "VolGroupUUID" = "ECE575C2-96B8-422D-8655-3DFAA72AB0E0"' '  |   "Device Characteristics" = {"Serial Number"="204370802915","Product Name"="WDC PC SN530"}' \
+		"Computer Name: Jane-MacBook" "          Display Serial Number: 2IV0171002681" "$h/jane/Library/x" "Hardware UUID: 01234567-89AB-CDEF-0123-456789ABCDEF" > "$d/t.txt"
+	scrub_file "$d/t.txt"
+	if grep -qiE "a4:83:e7|C02XYZ|2IV0171|ECE575C2|204370802915|a483e7|HomeNetwork|Neighbours|AirPods|Keyboard|11:22:33|Jane-MacBook|$h/jane|01234567-89AB" "$d/t.txt"; then r=1; else r=0; fi
+	check "the scan drops serials, addresses, Wi-Fi networks, paired devices and names" "$r"
+	if grep -q 'Firmware Version: wl0' "$d/t.txt" && grep -q 'Chipset: BCM_4364B3' "$d/t.txt" && grep -q 'Product Name"="WDC PC SN530' "$d/t.txt" && grep -q 'Card Type: Wi-Fi  (0x14E4, 0x7BF)' "$d/t.txt"; then r=0; else r=1; fi
+	check "the scan keeps the Wi-Fi card, its firmware and the Bluetooth chipset" "$r"
+	if grep -q '^Bluetooth Controller:' "$d/t.txt" && grep -q '(list removed)' "$d/t.txt"; then r=0; else r=1; fi
+	check "a dropped list says so, and the next section survives it" "$r"
+	rm -rf "$d"
 	[ "$fails" = 0 ] && say "" && say "all checks passed" || say "$fails failed"
 	return "$fails"
 }
@@ -153,5 +258,6 @@ case "${1:-}" in
 	--selftest) selftest ;;
 	--report) find_report ;;
 	"") make_stick ;;
-	*) sed -n '2,8p' "$0"; exit 2 ;;
+	--scan) scan_mac ;;
+	*) sed -n '2,9p' "$0"; exit 2 ;;
 esac

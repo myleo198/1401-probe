@@ -52,7 +52,7 @@ import time
 import traceback
 import zipfile
 
-VERSION = "2.1.0"
+VERSION = "2.2.0"
 SCHEMA = "1401-probe/1"
 STICK_LABEL = "PROBE1401"
 MARKER = "1401-probe.marker"
@@ -655,6 +655,67 @@ MSR_AMD = {0x1B: "APIC_BASE", 0xC0000080: "EFER", 0xC0010015: "HWCR", 0xC0010058
            0xC0010061: "PSTATE_LIMIT", 0xC0010062: "PSTATE_CTL", 0xC0010063: "PSTATE_STATUS",
            0xC0010114: "VM_CR", 0xC0010299: "RAPL_PWR_UNIT", 0xC0011029: "DE_CFG"}
 MSR_AMD.update({0xC0010064 + i: "PSTATE_DEF%d" % i for i in range(8)})
+# power, C-state residency, HWP, RAPL and MTRR/PAT registers: what macOS power management and framebuffer
+# caching depend on. Reads only; a register the CPU does not have reads as "unreadable".
+for _k, _v in {0x10: "IA32_TIME_STAMP_COUNTER", 0x3B: "IA32_TSC_ADJUST", 0xE7: "IA32_MPERF", 0xE8: "IA32_APERF",
+               0xFE: "IA32_MTRRCAP", 0x140: "MSR_MISC_FEATURE_ENABLES", 0x194: "MSR_FLEX_RATIO",
+               0x19C: "IA32_THERM_STATUS", 0x1AA: "MSR_MISC_PWR_MGMT", 0x1B0: "IA32_ENERGY_PERF_BIAS",
+               0x1B1: "IA32_PACKAGE_THERM_STATUS", 0x1FC: "MSR_POWER_CTL", 0x277: "IA32_PAT", 0x2FF: "IA32_MTRR_DEF_TYPE",
+               0x60A: "MSR_PKGC3_IRTL", 0x60B: "MSR_PKGC6_IRTL", 0x60C: "MSR_PKGC7_IRTL", 0x611: "MSR_PKG_ENERGY_STATUS",
+               0x614: "MSR_PKG_POWER_INFO", 0x618: "MSR_DRAM_POWER_LIMIT", 0x638: "MSR_PP0_POWER_LIMIT",
+               0x640: "MSR_PP1_POWER_LIMIT", 0x648: "MSR_CONFIG_TDP_NOMINAL", 0x649: "MSR_CONFIG_TDP_LEVEL1",
+               0x64A: "MSR_CONFIG_TDP_LEVEL2", 0x64B: "MSR_CONFIG_TDP_CONTROL", 0x64C: "MSR_TURBO_ACTIVATION_RATIO",
+               0x64F: "MSR_CORE_PERF_LIMIT_REASONS", 0x65C: "MSR_PLATFORM_POWER_LIMIT", 0x6B0: "MSR_GFX_PERF_LIMIT_REASONS",
+               0x772: "IA32_HWP_REQUEST_PKG", 0x774: "IA32_HWP_REQUEST", 0x777: "IA32_HWP_STATUS", 0xC80: "IA32_DEBUG_INTERFACE"}.items():
+    MSR_INTEL.setdefault(_k, _v)
+for _k, _v in {0x10: "TSC", 0x8B: "PATCH_LEVEL", 0xFE: "MTRRCAP", 0x277: "PAT", 0x2FF: "MTRR_DEF_TYPE",
+               0xC0010010: "SYSCFG", 0xC001001F: "NB_CFG", 0xC0010140: "OSVW_ID_LENGTH", 0xC0010293: "HW_PSTATE_STATUS",
+               0xC0010296: "CSTATE_CONFIG", 0xC001029A: "CORE_ENERGY_STAT", 0xC001029B: "PKG_ENERGY_STAT",
+               0xC00102B0: "CPPC_CAP1", 0xC00102B1: "CPPC_ENABLE", 0xC00102B2: "CPPC_CAP2", 0xC00102B3: "CPPC_REQ",
+               0xC00102B4: "CPPC_STATUS", 0xC0011020: "LS_CFG"}.items():
+    MSR_AMD.setdefault(_k, _v)
+
+# family 6 model -> name, from Intel's public model list; macOS picks its power and timer code by these numbers
+INTEL_MODELS = {
+    0x1A: "Nehalem", 0x1E: "Nehalem", 0x25: "Westmere", 0x2C: "Westmere-EP", 0x2A: "Sandy Bridge", 0x2D: "Sandy Bridge-E",
+    0x3A: "Ivy Bridge", 0x3E: "Ivy Bridge-E", 0x3C: "Haswell", 0x45: "Haswell-ULT", 0x46: "Haswell-GT3e", 0x3F: "Haswell-E",
+    0x3D: "Broadwell", 0x47: "Broadwell-GT3e", 0x4F: "Broadwell-E", 0x4E: "Skylake-U/Y", 0x5E: "Skylake-S/H",
+    0x55: "Skylake-X/Cascade Lake", 0x8E: "Kaby/Amber/Whiskey/Comet Lake-U", 0x9E: "Kaby/Coffee Lake",
+    0xA5: "Comet Lake-S/H", 0xA6: "Comet Lake-U", 0x66: "Cannon Lake", 0x7D: "Ice Lake-Y", 0x7E: "Ice Lake-U",
+    0x6A: "Ice Lake-SP", 0x6C: "Ice Lake-D", 0x8C: "Tiger Lake-U/Y", 0x8D: "Tiger Lake-H", 0xA7: "Rocket Lake",
+    0x8A: "Lakefield", 0x97: "Alder Lake-S", 0x9A: "Alder Lake-P", 0xBE: "Alder Lake-N", 0xB7: "Raptor Lake-S",
+    0xBA: "Raptor Lake-P", 0xBF: "Raptor Lake-S", 0x8F: "Sapphire Rapids", 0xCF: "Emerald Rapids",
+    0xAA: "Meteor Lake", 0xAC: "Meteor Lake", 0xC5: "Arrow Lake-H", 0xC6: "Arrow Lake-S", 0xB5: "Arrow Lake-U",
+    0xBD: "Lunar Lake", 0xCC: "Panther Lake", 0x5C: "Apollo Lake", 0x7A: "Goldmont Plus (GLK)", 0x96: "Elkhart Lake",
+    0x9C: "Jasper Lake",
+}
+AMD_FAMILIES = {0x15: "Bulldozer family", 0x16: "Jaguar/Puma", 0x17: "Zen / Zen+ / Zen 2", 0x19: "Zen 3 / Zen 4",
+                0x1A: "Zen 5"}
+# (family, first model, last model): name. A model outside these ranges keeps the family name and says so.
+AMD_MODELS = {
+    (0x17, 0x00, 0x0F): "Summit/Pinnacle Ridge, Naples (Zen / Zen+)", (0x17, 0x10, 0x1F): "Raven Ridge/Picasso (Zen / Zen+ APU)",
+    (0x17, 0x20, 0x2F): "Dali/Pollock (Zen APU)", (0x17, 0x30, 0x3F): "Rome (Zen 2)", (0x17, 0x60, 0x6F): "Renoir/Lucienne (Zen 2 APU)",
+    (0x17, 0x70, 0x7F): "Matisse (Zen 2)", (0x17, 0x90, 0x9F): "Van Gogh (Zen 2 APU)", (0x17, 0xA0, 0xAF): "Mendocino (Zen 2 APU)",
+    (0x19, 0x00, 0x0F): "Milan (Zen 3)", (0x19, 0x10, 0x1F): "Genoa (Zen 4)", (0x19, 0x20, 0x2F): "Vermeer (Zen 3)",
+    (0x19, 0x30, 0x3F): "Chagall (Zen 3)", (0x19, 0x40, 0x4F): "Rembrandt (Zen 3+ APU)", (0x19, 0x50, 0x5F): "Cezanne/Barcelo (Zen 3 APU)",
+    (0x19, 0x60, 0x6F): "Raphael (Zen 4)", (0x19, 0x70, 0x7F): "Phoenix/Hawk Point (Zen 4 APU)", (0x19, 0xA0, 0xAF): "Bergamo/Siena (Zen 4c)",
+    (0x1A, 0x00, 0x1F): "Turin (Zen 5)", (0x1A, 0x20, 0x2F): "Strix Point (Zen 5 APU)", (0x1A, 0x40, 0x4F): "Granite Ridge (Zen 5)",
+    (0x1A, 0x60, 0x6F): "Krackan Point (Zen 5 APU)", (0x1A, 0x70, 0x7F): "Strix Halo (Zen 5 APU)",
+}
+
+
+def cpu_codename(vendor, fam, model):
+    """A name from the public model tables, or UNKNOWN with the numbers: never a guess."""
+    if vendor == "GenuineIntel":
+        return INTEL_MODELS.get(model, "UNKNOWN Intel model 0x%X" % model) if fam == 6 else "Intel family 0x%X" % fam
+    if vendor == "AuthenticAMD":
+        for (f, lo, hi), name in AMD_MODELS.items():
+            if f == fam and lo <= model <= hi:
+                return name
+        if fam in AMD_FAMILIES:
+            return "%s (model 0x%X not in table)" % (AMD_FAMILIES[fam], model)
+        return "UNKNOWN AMD family 0x%X" % fam
+    return "UNKNOWN vendor"
 
 
 def cpuid_walk(q):
@@ -721,7 +782,7 @@ def cpu_decode(rows):
              "smap": b7 >> 20 & 1, "hybrid": d7 >> 15 & 1, "svm": e1[2] >> 2 & 1, "lzcnt": e1[2] >> 5 & 1,
              "avx_vnni": R.get((7, 1), z)[0] >> 4 & 1, "sse3": ecx1 & 1, "ssse3": ecx1 >> 9 & 1, "sse2": edx1 >> 26 & 1}
     return {"vendor": vendor, "brand": brand.decode("latin-1").strip("\x00 ").strip(), "family": fam, "model": model,
-            "stepping": eax1 & 0xF, "signature": hx(eax1, 8), "features": {k: bool(v) for k, v in feats.items()}}
+            "stepping": eax1 & 0xF, "signature": hx(eax1, 8), "codename": cpu_codename(vendor, fam, model), "features": {k: bool(v) for k, v in feats.items()}}
 
 
 def st_cpu():
@@ -806,7 +867,56 @@ def st_cpu():
                     threads=len(blocks), cores=len({"%s/%s" % (f("physical id", b), f("core id", b) or i) for i, b in enumerate(blocks)}),
                     features={k: k in fl for k in ("sse3", "ssse3", "sse4_1", "sse4_2", "avx", "avx2", "fma", "f16c", "aes",
                                                    "avx512f", "bmi1", "bmi2", "sha_ni", "vmx", "svm", "hypervisor")})
+    try:
+        cpu_power(info, msr0, intel)
+    except Exception as e:  # noqa: BLE001 - the CPUID/MSR part above is already in info
+        info["power_error"] = "%s: %s" % (type(e).__name__, e)
     REP["cpu"] = info
+
+
+# what macOS power management reads from Linux's view of the CPU: frequency tables, idle states, CPPC/HWP
+# performance levels, RAPL power limits and thermal zones (sysfs files, small text, read-only)
+CPU_POWER_GLOBS = (("cpufreq", "/sys/devices/system/cpu/cpufreq/policy*/*"), ("intel_pstate", "/sys/devices/system/cpu/intel_pstate/*"),
+                   ("amd_pstate", "/sys/devices/system/cpu/amd_pstate/*"), ("cpuidle", "/sys/devices/system/cpu/cpu0/cpuidle/state*/*"),
+                   ("cpuidle_driver", "/sys/devices/system/cpu/cpuidle/*"), ("acpi_cppc", "/sys/devices/system/cpu/cpu*/acpi_cppc/*"),
+                   ("rapl", "/sys/class/powercap/*/*"), ("thermal", "/sys/class/thermal/thermal_zone*/[tp]*"),
+                   ("vulnerabilities", "/sys/devices/system/cpu/vulnerabilities/*"))
+
+
+def cpu_power(info, msr0, intel):
+    for name, pat in CPU_POWER_GLOBS:
+        rows = []
+        for f in sorted(glob.glob(pat)):
+            if os.path.isfile(f) and os.access(f, os.R_OK):
+                v = rd(f, limit=4096)
+                if v is not None and len(v) < 400:
+                    rows.append("%s = %s" % (f, v))
+        save("cpu/power/%s.txt" % name, "\n".join(rows) + "\n")
+    if intel:
+        if 0xCE in msr0:
+            info["max_non_turbo_ratio"] = msr0[0xCE] >> 8 & 0xFF
+            info["max_efficiency_ratio"] = msr0[0xCE] >> 40 & 0xFF
+        if 0x1AD in msr0:
+            info["turbo_ratio_1c"] = msr0[0x1AD] & 0xFF
+        if 0x1A2 in msr0:
+            info["tjmax_c"] = msr0[0x1A2] >> 16 & 0xFF
+        if 0x606 in msr0 and 0x610 in msr0:
+            unit = 1.0 / (1 << (msr0[0x606] & 0xF))
+            info["pl1_w"] = round((msr0[0x610] & 0x7FFF) * unit, 2)
+            info["pl2_w"] = round((msr0[0x610] >> 32 & 0x7FFF) * unit, 2)
+            info["power_limit_locked"] = bool(msr0[0x610] >> 63 & 1)
+    # TSC rate measured against the kernel clock: the number macOS has to agree with for its timers
+    try:
+        fd = os.open("/dev/cpu/0/msr", os.O_RDONLY)
+        try:
+            t0, n0 = struct.unpack("<Q", os.pread(fd, 8, 0x10))[0], time.monotonic_ns()
+            time.sleep(0.5)
+            t1, n1 = struct.unpack("<Q", os.pread(fd, 8, 0x10))[0], time.monotonic_ns()
+        finally:
+            os.close(fd)
+        info["tsc_hz_measured"] = int((t1 - t0) * 1e9 / (n1 - n0))
+    except OSError as e:
+        info["tsc_hz_measured"] = "unreadable: %s" % e
 
 
 def parse_lspci_vmm(txt):
@@ -1593,6 +1703,173 @@ def st_gpu_drivers():
     REP["gpu_drivers"] = {"tried": tried, "cards": cards, "connectors": conns, "debugfs_errors": errors}
 
 
+def ioc_iowr(nr, size):
+    return (3 << 30) | (size << 16) | (ord("d") << 8) | (0x40 + nr)
+
+
+DRM_IOCTL_I915_GETPARAM = ioc_iowr(0x06, 16)
+DRM_IOCTL_I915_QUERY = ioc_iowr(0x39, 16)
+I915_GETPARAM_NAMES = {4: "CHIPSET_ID", 17: "HAS_LLC", 32: "REVISION", 33: "SUBSLICE_TOTAL", 34: "EU_TOTAL",
+                       42: "HUC_STATUS", 46: "SLICE_MASK", 47: "SUBSLICE_MASK", 51: "CS_TIMESTAMP_FREQUENCY"}
+I915_QUERIES = {1: "topology", 2: "engines", 4: "memory_regions", 5: "hwconfig", 7: "guc_submission_version"}
+I915_ENGINE_CLASS = {0: "render", 1: "copy", 2: "video", 3: "video_enhance", 4: "compute"}
+# Gen9-Gen13 display blocks by the offsets in Linux's i915 register headers: DE misc, power wells, CDCLK, DPLLs,
+# DBUF (0x40000-0x4FFFF), DFSM fuses, transcoders, DDI, AUX, scalers (0x60000-0x6FFFF), pipes and planes
+# (0x70000-0x7FFFF), PCH display: GMBUS, panel power, backlight (0xC0000-0xCFFFF), combo and Type-C PHYs
+# (0x160000-0x16FFFF), GT fuses and timestamp config. Reads only.
+INTEL_MMIO_RANGES = ((0x40000, 0x50000), (0x51000, 0x51100), (0x60000, 0x80000), (0xC0000, 0xD0000),
+                     (0x160000, 0x170000), (0x9100, 0x9200), (0xD00, 0xD20), (0x138000, 0x138200))
+INTEL_MMIO_SKIP = {0xC510C}  # GMBUS3, the I2C data port: reading it clocks a byte off the panel's DDC bus
+
+
+def intel_mmio_offsets():
+    for a, b in INTEL_MMIO_RANGES:
+        for off in range(a, b, 4):
+            if off not in INTEL_MMIO_SKIP:
+                yield off
+
+
+def i915_decode_query(qid, raw):
+    if qid == 1 and len(raw) >= 16:
+        _, ms, mss, meu, sso, _, euo, _ = struct.unpack_from("<8H", raw)
+        data = raw[16:]
+        pop = lambda b: sum(bin(x).count("1") for x in b)  # noqa: E731
+        return {"max_slices": ms, "max_subslices": mss, "max_eus_per_subslice": meu,
+                "slices": pop(data[:sso]), "subslices": pop(data[sso:euo]), "eus": pop(data[euo:])}
+    if qid == 2 and len(raw) >= 16:
+        engs = []
+        for i in range(struct.unpack_from("<I", raw)[0]):
+            o = 16 + 56 * i
+            if o + 24 > len(raw):
+                break
+            cls, inst = struct.unpack_from("<HH", raw, o)
+            engs.append("%s%d caps=0x%x" % (I915_ENGINE_CLASS.get(cls, "class%d" % cls), inst, struct.unpack_from("<Q", raw, o + 16)[0]))
+        return engs
+    return "%d bytes (raw saved)" % len(raw)
+
+
+def i915_uapi(bdf, tag):
+    """What i915 tells Mesa about the GPU: chip id, EU/subslice topology, engines, memory regions, hwconfig."""
+    nodes = sorted(glob.glob("/sys/bus/pci/devices/%s/drm/renderD*" % bdf))
+    if not nodes:
+        return "no render node"
+    node = "/dev/dri/" + os.path.basename(nodes[0])
+    if not os.path.exists(node):
+        os.makedirs("/dev/dri", exist_ok=True)
+        os.mknod(node, 0o600 | stat.S_IFCHR, os.makedev(226, int(os.path.basename(nodes[0])[7:])))
+    fd = os.open(node, os.O_RDWR)
+    res = {"getparam": {}}
+    try:
+        val = ctypes.c_int(0)
+        for prm in range(1, 80):
+            arg = bytearray(struct.pack("<iiQ", prm, 0, ctypes.addressof(val)))
+            name = I915_GETPARAM_NAMES.get(prm, str(prm))
+            try:
+                fcntl.ioctl(fd, DRM_IOCTL_I915_GETPARAM, arg, True)
+                res["getparam"][name] = val.value
+            except OSError as e:
+                res["getparam"][name] = "errno %d" % e.errno
+        for qid, name in I915_QUERIES.items():
+            item = (ctypes.c_uint64 * 3)(qid, 0, 0)  # query_id, (length:s32, flags:u32), data_ptr
+            q = bytearray(struct.pack("<IIQ", 1, 0, ctypes.addressof(item)))
+            try:
+                fcntl.ioctl(fd, DRM_IOCTL_I915_QUERY, q, True)
+                length = ctypes.c_int32.from_buffer(item, 8).value
+                if length <= 0:
+                    res[name] = "length %d" % length
+                    continue
+                buf = ctypes.create_string_buffer(length)
+                item[2] = ctypes.addressof(buf)
+                fcntl.ioctl(fd, DRM_IOCTL_I915_QUERY, q, True)
+                save(tag + "/query_%s.bin" % name, buf.raw)
+                res[name] = i915_decode_query(qid, buf.raw)
+            except OSError as e:
+                res[name] = "errno %d" % e.errno
+    finally:
+        os.close(fd)
+    return res
+
+
+def intel_display_snapshot(bdf, tag):
+    """Every display register in INTEL_MMIO_RANGES, read twice one second apart with the GPU held awake, so the
+    state the firmware and i915 left (power wells, CDCLK, PLLs, PHYs, pipes, panel power) is on record."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    libc.mmap.restype = ctypes.c_void_p
+    libc.mmap.argtypes = (ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_long)
+    ctl = "/sys/bus/pci/devices/%s/power/control" % bdf
+    old = rd(ctl)
+    fw = None
+    try:
+        _tw(ctl, "on")
+    except OSError:
+        pass
+    try:
+        dbg = [d for d in debugfs_dirs(sorted(glob.glob("/sys/kernel/debug/dri/*")))
+               if os.path.basename(d) == bdf or os.path.realpath(d + "/../../bus/pci/devices/" + bdf) == d]
+        for d in dbg + ["/sys/kernel/debug/dri/" + bdf]:
+            try:
+                fw = os.open(d + "/i915_forcewake_user", os.O_RDONLY)  # holds GT forcewake and a PM wakeref
+                break
+            except OSError:
+                fw = None
+        path = "/sys/bus/pci/devices/%s/resource0" % bdf
+        length = min(os.path.getsize(path), 0x200000)
+        rfd = os.open(path, os.O_RDONLY | os.O_SYNC)
+        try:
+            base = libc.mmap(None, length, mmap.PROT_READ, mmap.MAP_SHARED, rfd, 0)
+        finally:
+            os.close(rfd)
+        if base in (None, ctypes.c_void_p(-1).value):
+            raise OSError(ctypes.get_errno(), "mmap " + path)
+        try:
+            offs = [o for o in intel_mmio_offsets() if o < length]
+            a = {o: ctypes.c_uint32.from_address(base + o).value for o in offs}
+            time.sleep(1.0)
+            b = {o: ctypes.c_uint32.from_address(base + o).value for o in offs}
+        finally:
+            libc.munmap(ctypes.c_void_p(base), ctypes.c_size_t(length))
+    finally:
+        if fw is not None:
+            os.close(fw)
+        if old:
+            try:
+                _tw(ctl, old)
+            except OSError:
+                pass
+    rows = ["%06x %08x%s" % (o, a[o], "  ~%08x" % b[o] if b[o] != a[o] else "") for o in sorted(a) if a[o] or b[o]]
+    save(tag + "/mmio_display.txt", "# offset value [~value 1 s later when it moved]\n" + "\n".join(rows) + "\n")
+    save(tag + "/mmio_display.bin", b"".join(struct.pack("<II", o, a[o]) for o in sorted(a)))
+    return {"read": len(a), "nonzero": len(rows), "moving": sum(1 for o in a if a[o] != b[o]), "forcewake_held": fw is not None}
+
+
+def st_igpu_regs():
+    """Intel integrated graphics, after i915 has brought it up: what the driver reports to Mesa and a snapshot of
+    the display registers. This is the state a macOS display driver for the chip has to reproduce."""
+    out = REP.setdefault("igpu_regs", {})
+    for g in REP.get("gpus", []):
+        if g.get("vendor") != "0x8086":
+            continue
+        bdf = g["bdf"]
+        drv = rdlink("/sys/bus/pci/devices/%s/driver" % bdf)
+        if drv != "i915":
+            out[bdf] = {"skipped": "driver %s (the register snapshot needs i915)" % drv}
+            continue
+        tag = "gpu/intel-%s" % bdf.replace(":", "_")
+        with step("igpu:" + bdf) as go:
+            if not go:
+                out[bdf] = {"skipped": "it froze a previous run"}
+                continue
+            r = {}
+            with deadman(180, "intel registers " + bdf):
+                for key, fn in (("uapi", i915_uapi), ("display_mmio", intel_display_snapshot)):
+                    try:
+                        r[key] = fn(bdf, tag)
+                    except Exception as e:  # noqa: BLE001 - one part failing keeps the other
+                        r[key] = "%s: %s" % (type(e).__name__, e)
+            out[bdf] = r
+        save("gpu/igpu_regs.json", out)
+
+
 def debugfs_dirs(dirs):
     """This kernel shows each device three times: dri/<pci address>, dri/<N> and dri/<128+N>. Read it once, by
     address; the numbered ones are only used on a kernel that has no address directories."""
@@ -1620,6 +1897,8 @@ def summary():
     split = " (%s)" % " + ".join("%d%s" % (v, k) for k, v in sorted(ct.items())) if len(ct) > 1 else ""
     L.append("CPU       : %s, %s cores%s / %s threads   [family %s model %s stepping %s]" % (
         c.get("brand"), c.get("cores"), split, c.get("threads"), hx(c.get("family"), 2), hx(c.get("model"), 2), c.get("stepping")))
+    tsc = c.get("tsc_hz_measured")
+    L.append("CPU kind  : %s%s" % (c.get("codename"), ("   TSC %.3f GHz measured" % (tsc / 1e9)) if isinstance(tsc, int) else ""))
     for g in REP.get("gpus", []):
         v = g.get("vbios") or {}
         nv = g.get("nv") or {}
@@ -1636,6 +1915,13 @@ def summary():
         if any(i["class"] == "e0" and i["subclass"] == "01" and i["protocol"] == "01" for i in u["interfaces"]):
             k = "%s:%s" % (u["vid"], u["pid"])
             L.append("Bluetooth : %s [%s] (USB)" % (names.get(k) or u.get("product") or "?", k))
+    det = (REP.get("radios") or {}).get("details") or {}
+    for i, v in sorted((det.get("interfaces") or {}).items()):
+        if v.get("firmware"):
+            L.append("Firmware  : %s (%s) runs %s" % (v.get("driver"), v.get("bus"), v.get("firmware")))
+    for h, v in sorted((det.get("bluetooth") or {}).items()):
+        L.append("BT chip   : %s, driver %s, HCI version %s revision %s, maker %s" % (
+            h, v.get("driver"), v.get("hci_version"), v.get("hci_revision"), v.get("manufacturer")))
     for p in cls("0x0200"):
         L.append("Ethernet  : %s %s [%s:%s]" % (p["vendor_name"], p["device_name"], p["vendor"][2:], p["device"][2:]))
     for a in REP.get("audio", []):
@@ -1816,13 +2102,13 @@ def ask_radios():
     if not STICK or not glob.glob(os.path.join(MNT, "drivers", "radios-*.tar.xz")):
         return "no radio pack on this stick"
     UI.say("")
-    UI.say("  Optional: Wi-Fi, Bluetooth and Ethernet.")
+    UI.say("  Wi-Fi, Bluetooth and Ethernet.")
     UI.say("  This stick has no network drivers, so it cannot go online. To map those chips it can load their")
     UI.say("  drivers for about a minute near the end and watch them start. Nothing is configured or sent: there is")
     UI.say("  no network software on the stick, each radio is switched off the moment it starts, and the drivers")
     UI.say("  are removed again before the report is finished.")
-    k = UI.countdown(30, "Press Y to include them (any other key, or nothing, skips)")
-    return "yes" if k in ("y", "Y") else ("no answer" if k is None else "no")
+    k = UI.countdown(30, "Press N to leave them out (any other key, or nothing, includes them)")
+    return "no" if k in ("n", "N") else "yes"
 
 
 def unpack_pack(fn, into):
@@ -1862,6 +2148,133 @@ def radios_off():
         except OSError:
             pass
     return net_state()
+
+
+def read_bounded(path, timeout=3, cap=256 << 10):
+    """Read one debug file in a child that is killed after `timeout` s: some driver debug files ask the firmware
+    and can block, and one stuck file must not stop the scan."""
+    r, w = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        os.close(r)
+        try:
+            with open(path, "rb") as f:
+                left = cap
+                while left > 0:
+                    b = f.read(min(65536, left))
+                    if not b:
+                        break
+                    os.write(w, b)
+                    left -= len(b)
+        except OSError as e:
+            os.write(w, ("[read error: %s]\n" % e).encode())
+        os._exit(0)
+    os.close(w)
+    chunks, deadline = [], time.monotonic() + timeout
+    while True:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            os.kill(pid, signal.SIGKILL)
+            chunks.append(b"\n[timed out after %ds]\n" % timeout)
+            break
+        rl, _, _ = select.select([r], [], [], left)
+        if rl:
+            b = os.read(r, 65536)
+            if not b:
+                break
+            chunks.append(b)
+    os.close(r)
+    try:
+        os.waitpid(pid, os.WNOHANG)
+    except ChildProcessError:
+        pass
+    return b"".join(chunks)
+
+
+# Wi-Fi driver debug files: per-station, per-interface and key files carry addresses and network names, and the
+# action files restart, dump or trigger the firmware. Neither kind is opened.
+RADIO_DEBUGFS_DENY = ("netdev:", "stations", "key", "addr", "bssid", "ssid", "scan", "restart", "nmi", "fw_dbg", "dump",
+                      "trigger", "inject", "reset", "sram", "prph", "mem", "crash", "coredump", "simulate", "assert", "send")
+RADIO_DEBUGFS_ROOTS = ("ieee80211", "iwlwifi", "ath9k", "ath10k", "ath11k", "ath12k", "mt76", "rtw88", "rtw89", "brcmfmac")
+# Bluetooth: the controller's version, maker, LMP features and supported commands. Not its address, the paired
+# devices, keys or anything about other devices.
+BT_DEBUGFS_ALLOW = ("hci_version", "hci_revision", "manufacturer", "features", "supported_commands", "le_states",
+                    "voice_setting", "vendor_diag", "quirk_strict_duplicate_filter", "quirk_simultaneous_discovery")
+ETHTOOL_GDRVINFO, SIOCETHTOOL = 3, 0x8946
+
+
+def radio_debugfs_ok(rel):
+    rel = rel.lower()
+    return not any(k in rel for k in RADIO_DEBUGFS_DENY)
+
+
+def parse_drvinfo(b):
+    """struct ethtool_drvinfo: cmd, then driver / version / fw_version / bus_info / erom_version, 32 bytes each."""
+    f = lambda o: b[o:o + 32].split(b"\0", 1)[0].decode("latin-1")  # noqa: E731
+    return {"driver": f(4), "version": f(36), "firmware": f(68), "bus": f(100), "option_rom": f(132)}
+
+
+def ethtool_drvinfo(ifname):
+    """The driver's own name for the firmware it runs (ethtool -i), for any Wi-Fi or Ethernet interface."""
+    import socket  # noqa: PLC0415
+    buf = ctypes.create_string_buffer(struct.pack("<I", ETHTOOL_GDRVINFO), 196)
+    req = bytearray(struct.pack("16sP", ifname.encode()[:15], ctypes.addressof(buf)))
+    for fam in (socket.AF_UNIX, socket.AF_INET):
+        try:
+            with socket.socket(fam, socket.SOCK_DGRAM) as so:
+                fcntl.ioctl(so.fileno(), SIOCETHTOOL, req)
+            return parse_drvinfo(buf.raw)
+        except OSError as e:
+            err = e
+    return {"error": str(err)}
+
+
+def radio_details():
+    """Read while the radio drivers are loaded: each interface's driver and firmware version, each Wi-Fi chip's
+    capabilities and driver debug files, and each Bluetooth controller's version and features."""
+    det = {"interfaces": {}, "wifi_phys": {}, "bluetooth": {}, "debugfs_files": 0}
+    if not os.path.ismount("/sys/kernel/debug"):
+        os.makedirs("/sys/kernel/debug", exist_ok=True)
+        sh(None, ["mount", "-t", "debugfs", "none", "/sys/kernel/debug"], 10)
+    for i in sorted(os.listdir("/sys/class/net")):
+        if i != "lo":
+            det["interfaces"][i] = ethtool_drvinfo(i)
+    for ph in sorted(glob.glob("/sys/class/ieee80211/*")):
+        det["wifi_phys"][os.path.basename(ph)] = {"device": os.path.basename(os.path.realpath(ph + "/device")),
+                                                  "driver": rdlink(ph + "/device/driver"), "index": rd(ph + "/index")}
+    n = 0
+    for root in RADIO_DEBUGFS_ROOTS:
+        top = "/sys/kernel/debug/" + root
+        for dp, ds, fs in os.walk(top):
+            rel_dir = os.path.relpath(dp, "/sys/kernel/debug")
+            ds[:] = [d for d in ds if radio_debugfs_ok(os.path.join(rel_dir, d)) and rel_dir.count("/") < 4]
+            for f in fs:
+                rel = os.path.join(rel_dir, f)
+                if n >= 600 or not radio_debugfs_ok(rel) or not os.access(os.path.join(dp, f), os.R_OK):
+                    continue
+                b = read_bounded(os.path.join(dp, f))
+                if b:
+                    save("radios/debugfs/%s.txt" % rel, b)
+                    n += 1
+    for h in sorted(glob.glob("/sys/kernel/debug/bluetooth/hci*")):
+        name = os.path.basename(h)
+        ident = rd(h + "/identity") or ""
+        m = re.match(r"([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})", ident)
+        if m:  # the controller's address is learned as a secret before anything else from it is saved
+            SECRETS.add(m.group(1).lower(), "mac")
+            SECRETS.add(m.group(1).upper(), "mac")
+        bt = {"driver": rdlink("/sys/class/bluetooth/%s/device/driver" % name)}
+        for f in BT_DEBUGFS_ALLOW:
+            if os.path.exists(os.path.join(h, f)):
+                b = read_bounded(os.path.join(h, f), cap=64 << 10)
+                if b:
+                    save("radios/bluetooth/%s/%s.txt" % (name, f), b)
+                    n += 1
+                    if f in ("hci_version", "hci_revision", "manufacturer"):
+                        bt[f] = b.decode("latin-1").strip()
+        det["bluetooth"][name] = bt
+    det["debugfs_files"] = n
+    return det
 
 
 def st_radios():
@@ -1907,6 +2320,11 @@ def st_radios():
                         for i in sorted(os.listdir("/sys/class/net")) if i != "lo"}
     rr["bluetooth"] = {h: rdlink("/sys/class/bluetooth/%s/device/driver" % h) for h in sorted(os.listdir("/sys/class/bluetooth"))} \
         if os.path.isdir("/sys/class/bluetooth") else {}
+    try:
+        learn_macs()
+        rr["details"] = radio_details()
+    except Exception as e:  # noqa: BLE001 - the driver list above still stands
+        rr["details_error"] = "%s: %s" % (type(e).__name__, e)
     sh("radios/dmesg.txt", ["dmesg"], 30)
     loaded = [l.split()[0] for l in (rd("/proc/modules") or "").splitlines() if l.strip() and l.split()[0] not in before]
     rr["loaded"] = loaded
@@ -2040,7 +2458,8 @@ def st_trace():
             sh("trace/%s-load.txt" % meta["name"], ["modprobe", "nvidia"], 120)
             fds.extend(nv_open_all())
             ms = "modeset=1" if any(boot_vga(g["bdf"]) for g in nv) else "modeset=0"  # no modeset on a no-panel dGPU
-            sh("trace/%s-modeset.txt" % meta["name"], ["modprobe", "nvidia-drm", ms, "fbdev=0"], 120)
+            if "nvidia-drm" in meta.get("load", ["nvidia-drm"]):  # the 470 (Kepler) pack has no nvidia-drm on this kernel
+                sh("trace/%s-modeset.txt" % meta["name"], ["modprobe", "nvidia-drm", ms, "fbdev=0"], 120)
             time.sleep(10)  # connectors are probed after the bind, and the heads are assigned then
         with deadman(300, "nvidia trace " + meta["name"]):  # loading NVIDIA's own driver can wedge too
             run(meta["name"], bring_up)
@@ -2052,7 +2471,8 @@ def st_trace():
             tr["errors"][meta["name"] + ":display"] = str(e)
         for f in fds:
             os.close(f)
-        sh("trace/%s-unload.txt" % meta["name"], ["modprobe", "-r", "nvidia-drm", "nvidia-modeset", "nvidia"], 120)
+        loaded = [m for m in ("nvidia-drm", "nvidia-modeset", "nvidia") if os.path.isdir("/sys/module/" + m.replace("-", "_"))]
+        sh("trace/%s-unload.txt" % meta["name"], ["modprobe", "-r", "-a"] + loaded, 120)
         for bdf in held:  # the console comes back for the last screen
             try:
                 _tw("/sys/bus/pci/drivers/nouveau/bind", bdf)
@@ -2274,7 +2694,7 @@ def main():
               ("Kernel log", "dmesg", st_dmesg, 30)]
     if radios in ("yes", "test"):
         stages.append(("Wi-Fi, Bluetooth, Ethernet (you said yes)", "radios", st_radios, 300))
-    total = len(stages) + (3 if MODE == "full" else 0)
+    total = len(stages) + (4 if MODE == "full" else 0)
     for i, (title, key, fn, t) in enumerate(stages, 1):
         run_stage(i, total, title, key, fn, t)
     s = summary()
@@ -2295,7 +2715,8 @@ def main():
         # No skip key: the graphics-driver stage is the data NullMoth needs most. A freeze here is
         #   remembered on the stick, so the next run skips only the driver that froze (step "driver:<name>").
         UI.countdown(20, "Starting in (any key starts now)")
-        run_stage(total - 2, total, "Graphics drivers (connectors, firmware)", "gpu_drivers", st_gpu_drivers, 420)
+        run_stage(total - 3, total, "Graphics drivers (connectors, firmware)", "gpu_drivers", st_gpu_drivers, 420)
+        run_stage(total - 2, total, "Intel graphics registers", "igpu_regs", st_igpu_regs, 240)
         run_stage(total - 1, total, "Driver trace (what each driver does to the hardware)", "trace", st_trace, 900)
         run_stage(total, total, "GPU test (Linux's own Vulkan driver, off screen)", "gpu3d", st_gpu3d, 600)
     elif MODE == "full":
@@ -2716,6 +3137,38 @@ def selftest():
     check("the Vulkan pack is found under drivers/", (vk_pack(vt) or "").endswith("vulkan-mesa-26.1.6-r0.tar.xz"), str(vk_pack(vt)))
     shutil.rmtree(vt, ignore_errors=True)
 
+    u = lambda t: struct.unpack("<I", t)[0]  # noqa: E731
+    amd0 = (0, 0, (0x10, u(b"Auth"), u(b"cAMD"), u(b"enti")))
+    int0 = (0, 0, (0x20, u(b"Genu"), u(b"ntel"), u(b"ineI")))
+    check("a real Ryzen 5 5600X (0xA20F10) reads Vermeer (Zen 3)",
+        cpu_decode([amd0, (1, 0, (0x00A20F10, 0, 0, 0))])["codename"] == "Vermeer (Zen 3)",
+        cpu_decode([amd0, (1, 0, (0x00A20F10, 0, 0, 0))])["codename"])
+    check("an 11th-gen laptop i5-1135G7 (0x806C1) reads Tiger Lake-U/Y",
+        cpu_decode([int0, (1, 0, (0x000806C1, 0, 0, 0))])["codename"] == "Tiger Lake-U/Y",
+        cpu_decode([int0, (1, 0, (0x000806C1, 0, 0, 0))])["codename"])
+    check("an AMD model outside the table keeps the family and says so",
+        "not in table" in cpu_decode([amd0, (1, 0, (0x00A90F00, 0, 0, 0))])["codename"],
+        cpu_decode([amd0, (1, 0, (0x00A90F00, 0, 0, 0))])["codename"])
+    check("an Intel model nobody listed says UNKNOWN, never a guess",
+        cpu_decode([int0, (1, 0, (0x000F0FF0, 0, 0, 0))])["codename"].startswith(("UNKNOWN", "Intel family")),
+        cpu_decode([int0, (1, 0, (0x000F0FF0, 0, 0, 0))])["codename"])
+    di = struct.pack("<I", 3) + b"iwlwifi".ljust(32, b"\0") + b"6.18.53".ljust(32, b"\0") + \
+        b"86.fb5c9aeb.0 QuZ-a0-hr-b0-86".ljust(32, b"\0") + b"0000:00:14.3".ljust(32, b"\0") + b"".ljust(32 + 12 + 20, b"\0")
+    check("ethtool driver info gives the Wi-Fi firmware version and the PCI address",
+        parse_drvinfo(di)["firmware"] == "86.fb5c9aeb.0 QuZ-a0-hr-b0-86" and parse_drvinfo(di)["bus"] == "0000:00:14.3", str(parse_drvinfo(di)))
+    check("Wi-Fi debug files about stations, interfaces, keys and firmware actions are never opened",
+        not any(radio_debugfs_ok(x) for x in ("ieee80211/phy0/netdev:wlan0/addr", "ieee80211/phy0/stations/aa", "iwlwifi/0000:00:14.3/iwlmvm/fw_restart",
+                                             "ieee80211/phy0/keys/1", "iwlwifi/x/iwlmvm/fw_dbg_collect", "ath11k/pci/simulate_fw_crash"))
+        and all(radio_debugfs_ok(x) for x in ("ieee80211/phy0/hwflags", "iwlwifi/0000:00:14.3/iwlmvm/fw_ver", "ieee80211/phy0/ht40allow_map")))
+    check("Bluetooth keeps the controller's version and features, never its address or paired devices",
+        "hci_version" in BT_DEBUGFS_ALLOW and "supported_commands" in BT_DEBUGFS_ALLOW
+        and not any(x in BT_DEBUGFS_ALLOW for x in ("identity", "link_keys", "long_term_keys", "device_list", "static_address")))
+    offs = list(intel_mmio_offsets())
+    check("the Intel register snapshot skips GMBUS3 (it would clock a byte off the panel) and reads every other one",
+        0xC510C not in offs and 0xC5108 in offs and len(offs) == sum((y - x) // 4 for x, y in INTEL_MMIO_RANGES) - 1, str(len(offs)))
+    topo = struct.pack("<8H", 0, 1, 6, 16, 1, 0, 2, 16) + b"\x01" + b"\x3f\x00" + b"\xff\xff" * 6 + b"\xff" * 0
+    check("the i915 topology query decodes slices / subslices / EUs",
+        i915_decode_query(1, topo)["subslices"] == 6 and i915_decode_query(1, topo)["eus"] == 96, str(i915_decode_query(1, topo)))
     print("\n%d failed" % len(fails) if fails else "\nall checks passed")
     return 1 if fails else 0
 

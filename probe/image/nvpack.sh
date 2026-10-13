@@ -19,7 +19,7 @@ say() { printf '\n== %s\n' "$*"; }
 cd /work
 OUT=out/nvpack
 mkdir -p "$OUT" /tmp/nv
-apk add -q gcc make musl-dev linux-lts-dev binutils xz coreutils bash perl findutils kmod gcompat >/dev/null
+apk add -q gcc make musl-dev linux-lts-dev binutils xz coreutils bash perl findutils kmod gcompat python3 >/dev/null
 V=$(ls /usr/src | sed -n 's/^linux-headers-//p' | head -1)
 [ -n "$V" ] || { echo "error: no linux-lts headers"; exit 1; }
 echo "kernel $V"
@@ -63,8 +63,17 @@ echo "$PACKS" | while read -r VER KIND ARCHS SUM; do
 	fi
 	if [ "$KIND" = open ]; then SRC="$X/kernel-open"; else SRC="$X/kernel"; fi
 	J=$(nproc)
+	MODS="nvidia nvidia-modeset nvidia-drm nvidia-uvm"
+	if [ "$VER" = 470.256.02 ]; then
+		# NVIDIA no longer updates 470 (Kepler): patched to build on this kernel, without nvidia-drm (nv470-patch.py)
+		# built inside the container: its feature probes write pde_data.h and PDE_DATA.h, which collide on the Mac's
+		# case-insensitive disk (the second result overwrote the first and the build took the wrong path)
+		rm -rf /tmp/nv470-src && cp -a "$SRC" /tmp/nv470-src && SRC=/tmp/nv470-src
+		python3 probe/image/nv470-patch.py "$SRC" || { echo "error: the 470 patch does not apply"; exit 1; }
+		MODS="nvidia nvidia-modeset nvidia-uvm"
+	fi
 	# a closed branch that no longer builds on this kernel is recorded, not fatal: those cards fall back to nouveau
-	if ! make -C "$SRC" -j"$J" SYSSRC=/usr/src/linux-headers-$V modules >"$OUT/$NAME.build.log" 2>&1; then
+	if ! make -C "$SRC" -j"$J" SYSSRC=/usr/src/linux-headers-$V NV_KERNEL_MODULES="$MODS" modules >"$OUT/$NAME.build.log" 2>&1; then
 		echo "  $NAME does NOT build on kernel $V (log: $OUT/$NAME.build.log); its cards use nouveau"
 		tail -5 "$OUT/$NAME.build.log"
 		echo "$V $KEY" > "$OUT/$NAME.failed"
@@ -74,7 +83,7 @@ echo "$PACKS" | while read -r VER KIND ARCHS SUM; do
 	S=/tmp/nv/stage-$VER
 	rm -rf "$S"
 	mkdir -p "$S/modules" "$S/firmware/nvidia/$VER" "$S/licenses"
-	for m in nvidia nvidia-modeset nvidia-drm nvidia-uvm; do
+	for m in $MODS; do
 		[ -f "$SRC/$m.ko" ] || { echo "error: $NAME built no $m.ko"; exit 1; }
 		cp "$SRC/$m.ko" "$S/modules/"
 	done
@@ -94,7 +103,7 @@ echo "$PACKS" | while read -r VER KIND ARCHS SUM; do
 	done
 	cat > "$S/pack.json" <<EOF
 {"name": "$NAME", "version": "$VER", "kind": "$KIND", "kernel": "$V", "archs": "$ARCHS",
- "load": ["nvidia", "nvidia-modeset", "nvidia-drm"], "run_sha256": "$SUM"}
+ "load": [$(for m in nvidia nvidia-modeset nvidia-drm; do case " $MODS " in *" $m "*) printf '%s"%s"' "${sep:-}" "$m"; sep=", ";; esac; done; unset sep)], "run_sha256": "$SUM"}
 EOF
 	(cd "$S" && find . -type f ! -name SHA256SUMS | sort | xargs sha256sum > /tmp/nvsums && mv /tmp/nvsums SHA256SUMS)
 	tar -C "$S" -cf - . | xz -6 -T0 > "$PK.part"

@@ -49,6 +49,15 @@ a { color: var(--link); }
     <b>You need:</b> a USB stick of 1 GB or more that you don't need anything on (it gets erased), and this PC.
   </div>
 
+  <h2>First · Scan from Windows (about 3 minutes)</h2>
+  <ol>
+    <li>Open <b>1401 Probe</b>, click <b>Scan this PC from Windows (about 3 minutes)</b>, then <b>Start the Windows scan</b>.
+      It only reads and never goes online.</li>
+    <li>When it says <b>Done</b>, the scan is on your Desktop as <code>1401-windows-scan-....zip</code>. Click <b>Open the
+      upload page</b> and drag it onto the page.</li>
+    <li>Windows can't see inside the chips, so please also do the USB stick scan below. It is the one we need most.</li>
+  </ol>
+
   <h2>1 · Make the stick (in Windows)</h2>
   <ol>
     <li>Open <b>1401 Probe</b> and click <b>Make the scanner USB stick</b>.</li>
@@ -71,9 +80,10 @@ a { color: var(--link); }
       </table>
     </li>
     <li>Choose <b>1401 Probe - scan this computer</b> (it starts by itself after 5 seconds).</li>
-    <li>It asks once whether to include <b>Wi-Fi, Bluetooth and Ethernet</b>. Press <kbd>Y</kbd> within 30 seconds to
-      include them; any other key, or nothing, skips them. If you say yes, it loads only your chips' drivers for about a
-      minute, switches every radio off the moment it starts, and removes them again. It never goes online.</li>
+    <li>It asks once about <b>Wi-Fi, Bluetooth and Ethernet</b>. They are included unless you press <kbd>N</kbd> within
+      30 seconds. It loads only your chips' drivers for about a minute, records each chip's firmware and what it can do,
+      switches every radio off the moment it starts, and removes the drivers again. It never goes online and never
+      records the networks around you or the devices paired with yours.</li>
   </ol>
 
   <h2>3 · Let it scan</h2>

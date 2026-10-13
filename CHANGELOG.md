@@ -2,6 +2,25 @@
 
 Every release stays up, on nullmothsystems.com/probe and on the GitHub releases page, with its SHA-256.
 
+## 2.2.0 - 2026-10-13
+
+The whole machine, from every side: the stick, Windows, and macOS.
+
+- **New: scan from Windows.** In the app, click "Scan this PC from Windows (about 3 minutes)". It records the
+  processor, graphics, displays, firmware tables, Wi-Fi, Bluetooth, network, sound, battery and every device with its
+  IDs and driver, and puts one .zip on your Desktop to send. It only reads and never goes online.
+- **New: scan a Mac.** `bash 1401-probe-mac.sh --scan` scans a Mac or Mothintosh (no password, about a minute).
+- **Wi-Fi and Bluetooth chips in depth.** Each chip's firmware version and what it can do, and the Bluetooth
+  controller's version and features. This step is now included by default: press N at the question to skip it.
+- **Processors:** the chip's family name (Tiger Lake, Vermeer, Granite Ridge and so on), power and turbo limits,
+  frequency and sleep-state tables, and the timer speed measured.
+- **Intel integrated graphics:** what Linux's driver reports about the GPU and a snapshot of its display registers.
+- **Older NVIDIA cards (Kepler: GTX 600/700, Quadro K, Tesla K):** NVIDIA's own 470 driver is back on the stick, patched
+  to run on the new kernel, so the trace records NVIDIA's own start-up on these cards too, not only the open-source one.
+- The Mac and Linux tools are attached to the GitHub release (the site's links to them were broken).
+- Never saved, on any of the three: serial numbers, UUIDs, network and Bluetooth addresses, Wi-Fi network names,
+  the names of paired devices, and the computer's and your user's names.
+
 ## 2.1.0 - 2026-10-11
 
 Every graphics card and integrated GPU now counts, old and new, whatever the brand. This is how NullMoth learns the

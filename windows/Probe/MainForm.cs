@@ -11,7 +11,8 @@ namespace Probe1401
 {
     /// <summary>The whole app is one wizard window:
     ///   Home -> 1 Check this PC -> 2 Pick the stick -> 3 Make it -> 4 Start the scanner
-    ///   Home -> Find my report (after the scan)</summary>
+    ///   Home -> Find my report (after the scan)
+    ///   Home -> Scan this PC from Windows (WindowsScan.ps1, read-only, a few minutes)</summary>
     class MainForm : Form
     {
         readonly Label title = new Label(), step = new Label();
@@ -145,12 +146,13 @@ namespace Probe1401
             Text_("This app makes a USB stick that scans your computer's hardware (processor, motherboard, " +
                   "graphics card, Wi-Fi and Bluetooth chips, sound, USB ports and firmware) and saves one report file " +
                   "back to the stick.");
-            Text_("The scanner runs on its own, offline. It starts with no network drivers (it asks before it ever loads " +
-                  "Wi-Fi, Bluetooth or Ethernet drivers, and never goes online), locks every drive except its own " +
+            Text_("The scanner runs on its own, offline. It starts with no network drivers (it loads the Wi-Fi, Bluetooth and " +
+                  "Ethernet drivers for one minute unless you say no, switches the radios off, and never goes online), locks every drive except its own " +
                   "stick read-only, and removes serial numbers before it saves anything. You upload the report yourself " +
                   "at nullmothsystems.com.");
             Text_("You need: a USB stick of 1 GB or more whose contents you don't need, and about 30 minutes.", true);
             Btn("Make the scanner USB stick  ›", (s, e) => Checks());
+            Btn("Scan this PC from Windows (about 3 minutes)  ›", (s, e) => WindowsScan());
             Btn("I already scanned - find my report  ›", (s, e) => ReportPage());
             var docs = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, 6, 0, 0) };
             foreach (var d in new[] { Tuple.Create("How to use it", "instructions.html"), Tuple.Create("License", "LICENSE.txt"),
@@ -163,6 +165,96 @@ namespace Probe1401
                 docs.Controls.Add(b);
             }
             body.Controls.Add(docs);
+        }
+
+        // ----------------------------------------------------------------------------------- Windows scan
+
+        static readonly string ScanScript = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "WindowsScan.ps1");
+        Process scan;
+
+        void WindowsScan()
+        {
+            Page("Scan this PC from Windows", "About 3 minutes", Home, null, null);
+            Text_("This scan reads what Windows knows about this PC's hardware: processor, graphics, displays, firmware " +
+                  "tables, Wi-Fi, Bluetooth, network, sound, battery and every other device with its IDs and driver.");
+            Text_("It only reads. It changes nothing and never goes online. Serial numbers, network addresses, Wi-Fi " +
+                  "network names, the names of your paired devices and this PC's name are left out.");
+            Text_("Windows can't show the chips' internal registers, so the USB stick scan still matters. Please do both.", false, Theme.Muted);
+            if (!File.Exists(ScanScript))
+            {
+                Text_("Missing file: " + ScanScript + ". Reinstall 1401 Probe.", false, Bad);
+                return;
+            }
+            Button go = null;
+            go = Btn("Start the Windows scan  ›", (s, e) => RunWindowsScan(go));
+        }
+
+        void RunWindowsScan(Button go)
+        {
+            go.Enabled = false;
+            back.Enabled = false;
+            var progress = Text_("Starting...", true, Theme.Cyan);
+            var log = new TextBox { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Width = body.ClientSize.Width - 30,
+                                    Height = 150, BackColor = Theme.Panel, ForeColor = Theme.Muted, Font = new Font("Consolas", 8.5f) };
+            body.Controls.Add(log);
+            string desk = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+            string ps = SystemChecks.Sys32(@"WindowsPowerShell\v1.0\powershell.exe");
+            string result = null;
+            var psi = new ProcessStartInfo(ps, "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"" + ScanScript +
+                                           "\" -OutDir \"" + desk + "\" -Version " + Application.ProductVersion)
+            { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+            scan = new Process { StartInfo = psi, EnableRaisingEvents = true };
+            DataReceivedEventHandler line = (s, e) =>
+            {
+                if (e.Data == null) return;
+                BeginInvoke((Action)(() =>
+                {
+                    if (e.Data.StartsWith("STEP ")) progress.Text = "Scanning: " + e.Data.Substring(5);
+                    else if (e.Data.StartsWith("RESULT ")) result = e.Data.Substring(7).Trim();
+                    log.AppendText(e.Data + "\r\n");
+                }));
+            };
+            scan.OutputDataReceived += line;
+            scan.ErrorDataReceived += line;
+            scan.Exited += (s, e) => BeginInvoke((Action)(() => WindowsScanDone(result, scan.ExitCode)));
+            try
+            {
+                scan.Start();
+                scan.BeginOutputReadLine();
+                scan.BeginErrorReadLine();
+            }
+            catch (Exception ex)
+            {
+                progress.Text = "Could not start PowerShell: " + ex.Message;
+                progress.ForeColor = Bad;
+                back.Enabled = true;
+            }
+        }
+
+        void WindowsScanDone(string zip, int code)
+        {
+            // the output events can trail the exit event by a moment; the RESULT line is looked for again on disk
+            if (zip == null)
+            {
+                string desk = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+                zip = Directory.GetFiles(desk, "1401-windows-scan-*.zip").OrderByDescending(f => File.GetLastWriteTime(f))
+                               .FirstOrDefault(f => File.GetLastWriteTime(f) > DateTime.Now.AddMinutes(-30));
+            }
+            Page("Scan this PC from Windows", "Done", Home, null, null);
+            if (zip == null || !File.Exists(zip))
+            {
+                Text_("The Windows scan did not finish (exit code " + code + "). Run it again, or send us a photo of this window.", false, Bad);
+                Btn("Try again", (s, e) => WindowsScan());
+                return;
+            }
+            Text_("Done. Your Windows scan is on the Desktop:", true, Good);
+            Text_(Path.GetFileName(zip));
+            Btn("Show the file", (s, e) => Process.Start("explorer.exe", "/select,\"" + zip + "\""));
+            string url = Reports.UploadUrl();
+            if (url.Length > 0) Btn("Open the upload page (" + new Uri(url).Host + ")", (s, e) => Process.Start(url));
+            Text_("Drag the file onto the upload page. This app never uploads anything by itself.", false, Theme.Muted);
+            Text_("Next, the deeper scan from the USB stick:", true, Theme.Purple);
+            Btn("Make the scanner USB stick  ›", (s, e) => Checks());
         }
 
         void Checks()
@@ -313,8 +405,8 @@ namespace Probe1401
                 : key.StartsWith("F") ? "Press " + key + " repeatedly as the computer starts to open its boot menu, "
                 : "Open the boot menu (" + key + "), ";
             Text_("2.  Leave the stick plugged in and restart. " + how + "and pick the USB stick marked UEFI.");
-            Text_("3.  Pick \"1401 Probe - scan this computer\". It asks once whether to include Wi-Fi, Bluetooth and " +
-                  "Ethernet (press Y within 30 seconds, or nothing for no). The scan takes about 5 to 20 minutes. The last " +
+            Text_("3.  Pick \"1401 Probe - scan this computer\". It asks once about Wi-Fi, Bluetooth and Ethernet: they " +
+                  "are included unless you press N within 30 seconds. The scan takes about 5 to 20 minutes. The last " +
                   "steps test the graphics card and the screen may go black for up to 10 minutes. Leave it running. If " +
                   "nothing happens for 15 minutes, hold the power button. It turns the computer off by itself.");
             Text_("4.  Put your settings back: turn Secure Boot back ON in BIOS setup (Del or F2 as it starts), then start " +

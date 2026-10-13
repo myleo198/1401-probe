@@ -11,10 +11,11 @@ WHAT IT DOES
 
 WHAT IT NEVER DOES
   - It never connects to the internet. The system on this stick starts with no network, Wi-Fi or
-    Bluetooth drivers, so it cannot. At the start it asks whether to include Wi-Fi, Bluetooth and
-    Ethernet (press Y within 30 seconds; anything else, or nothing, means no). If you say yes, it loads
-    only your chips' drivers for about a minute, switches every radio off the moment it starts, and
-    removes them again. Nothing is ever configured or sent. The report records that it checked.
+    Bluetooth drivers, so it cannot. At the start it asks about Wi-Fi, Bluetooth and Ethernet: they
+    are included unless you press N within 30 seconds. It loads only your chips' drivers for about a
+    minute, records each chip's firmware and what it can do, switches every radio off the moment it
+    starts, and removes them again. Nothing is ever configured or sent, and the networks around you and
+    the devices paired with yours are never recorded. The report records that it checked.
   - It never reads, mounts or changes your drives or Windows. Before scanning, it locks every drive
     except this stick read-only.
   - It never changes BIOS/UEFI settings.

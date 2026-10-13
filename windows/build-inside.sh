@@ -9,7 +9,7 @@ VERSION=$(sed -n 's/^VERSION = "\(.*\)"$/\1/p' probe/overlay/usr/lib/1401-probe/
 
 echo "== app ($VERSION)"
 rm -rf out/windows && mkdir -p out/windows
-dotnet build windows/Probe/Probe.csproj -c Release -nologo -v q -o out/windows/app
+dotnet build windows/Probe/Probe.csproj -c Release -nologo -v q -p:Version="$VERSION" -o out/windows/app
 
 echo "== nsis"
 apt-get update -qq >/dev/null && apt-get install -y -qq nsis binutils >/dev/null
@@ -20,6 +20,7 @@ mkdir -p "$stage/payload"
 cp out/windows/app/1401Probe.exe "$stage/"
 [ -f out/windows/app/1401Probe.exe.config ] && cp out/windows/app/1401Probe.exe.config "$stage/"
 cp windows/probe.json "$stage/"
+cp windows/Probe/WindowsScan.ps1 "$stage/"
 cp windows/Probe/app.ico "$stage/"
 # the license, the instructions, and the open-source notices the image build wrote (they also ride on the stick)
 mkdir -p "$stage/docs"
