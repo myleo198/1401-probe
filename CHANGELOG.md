@@ -9,7 +9,7 @@ The whole machine, from every side: the stick, Windows, and macOS.
 - **New: scan from Windows.** In the app, click "Scan this PC from Windows (about 3 minutes)". It records the
   processor, graphics, displays, firmware tables, Wi-Fi, Bluetooth, network, sound, battery and every device with its
   IDs and driver, and puts one .zip on your Desktop to send. It only reads and never goes online.
-- **New: scan a Mac.** `bash 1401-probe-mac.sh --scan` scans a Mac or Mothintosh (no password, about a minute).
+- **New: scan a Mac.** `bash 1401-probe-mac.sh --scan` scans a Mac or Nullintosh (no password, about a minute).
 - **Wi-Fi and Bluetooth chips in depth.** Each chip's firmware version and what it can do, and the Bluetooth
   controller's version and features. This step is now included by default: press N at the question to skip it.
 - **Processors:** the chip's family name (Tiger Lake, Vermeer, Granite Ridge and so on), power and turbo limits,
