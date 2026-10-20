@@ -3,7 +3,7 @@
 #
 #   bash 1401-probe-mac.sh            make the stick (asks before it erases anything)
 #   bash 1401-probe-mac.sh --report   after the scan: copy the report off the stick, open the upload page
-#   bash 1401-probe-mac.sh --scan     scan THIS Mac (or Mothintosh): CPU, graphics, Wi-Fi, Bluetooth, every device
+#   bash 1401-probe-mac.sh --scan     scan THIS Mac (or Nullintosh): CPU, graphics, Wi-Fi, Bluetooth, every device
 #   bash 1401-probe-mac.sh --selftest
 #
 # Step by step, and it says each step as it goes:
